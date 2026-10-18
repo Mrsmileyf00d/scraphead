@@ -1,446 +1,604 @@
 "use strict";
 
-// ============================================
 // SCRAPHEAD: SCRAP WARZ
-// Stage 1 - Playable combat prototype
-// ============================================
+// STAGE 2 - BREAKABLE PARTS
+// Phaser 3 | No image files required
 
-const CONFIG = {
-  width: 960,
-  height: 540,
+const W = 960;
+const H = 540;
+
+const CFG = {
+  speed: 260,
+  jump: 490,
   gravity: 1100,
-  moveSpeed: 270,
-  jumpSpeed: 490,
-  attackCooldown: 360,
-  attackRange: 92,
+  attackRange: 100,
   attackDamage: 25,
-  attackKnockback: 470
+  attackCooldown: 350
 };
 
-// GAME STATE: data separate from rendering.
-// This structure can later be synchronized online.
-const GameState = {
+// Keep gameplay data separate from the drawing.
+const State = {
   player: {
     hp: 100,
     maxHp: 100,
     facing: 1,
-    grounded: false,
-    attackReady: true
+    parts: {
+      head: true,
+      arm: true,
+      legs: true,
+      armor: true
+    }
   },
   dummy: {
     hp: 100,
     maxHp: 100,
-    alive: true
-  },
-  gameOver: false
+    parts: {
+      head: true,
+      arm: true,
+      legs: true,
+      armor: true
+    }
+  }
 };
 
-class ScrapheadScene extends Phaser.Scene {
+class Scraphead extends Phaser.Scene {
   constructor() {
-    super("ScrapheadScene");
+    super("Scraphead");
   }
 
   create() {
-    this.resetState();
-    this.createTextures();
+    this.makeTextures();
     this.createArena();
-    this.createFighters();
-    this.createUI();
+    this.createRobots();
     this.createControls();
+    this.createHUD();
 
-    this.attackVisual = this.add.rectangle(
-      0, 0, 72, 40, 0xffbd45, 0.5
-    ).setVisible(false).setDepth(10);
+    this.droppedParts = this.physics.add.group();
 
-    this.attackGraphics = this.add.graphics()
-      .setDepth(11);
+    this.physics.add.collider(this.player, this.platforms);
+    this.physics.add.collider(this.dummy, this.platforms);
+    this.physics.add.collider(this.droppedParts, this.platforms);
 
-    this.message = this.add.text(
-      CONFIG.width / 2, 230, "",
+    this.physics.add.overlap(
+      this.player,
+      this.droppedParts,
+      this.collectPart,
+      null,
+      this
+    );
+
+    this.physics.add.collider(
+      this.player,
+      this.dummy,
+      this.bumpDummy,
+      null,
+      this
+    );
+
+    this.drawings = this.add.graphics().setDepth(5);
+
+    this.attackBox = this.add.rectangle(
+      0, 0, 72, 46, 0xffd166, 0.45
+    ).setVisible(false).setDepth(8);
+
+    this.notice = this.add.text(
+      W / 2, 220, "",
       {
         fontFamily: "monospace",
-        fontSize: "30px",
+        fontSize: "25px",
         color: "#ffffff",
         align: "center",
         stroke: "#101216",
-        strokeThickness: 6
+        strokeThickness: 5
       }
     ).setOrigin(0.5).setDepth(20);
 
-    this.physics.world.setBounds(
-      0, 0, CONFIG.width, CONFIG.height
-    );
+    this.noticeTimer = null;
+    this.lastBump = 0;
+    this.lastAttack = 0;
+    this.attackUntil = 0;
+    this.ended = false;
+
+    this.physics.world.setBounds(0, 0, W, H);
   }
 
-  resetState() {
-    GameState.player.hp = 100;
-    GameState.player.facing = 1;
-    GameState.player.grounded = false;
-    GameState.player.attackReady = true;
-    GameState.dummy.hp = 100;
-    GameState.dummy.alive = true;
-    GameState.gameOver = false;
-  }
+  makeTextures() {
+    const g = this.make.graphics({
+      x: 0, y: 0, add: false
+    });
 
-  createTextures() {
-    const g = this.make.graphics({ x: 0, y: 0, add: false });
+    g.fillStyle(0x454d59);
+    g.fillRect(0, 0, 960, 76);
+    g.lineStyle(3, 0xf2b544);
+    g.lineBetween(0, 2, 960, 2);
+    g.lineStyle(1, 0x737b84);
 
-    // Chunky junk robot.
-    g.fillStyle(0x444d59);
-    g.fillRect(8, 23, 32, 29);
-    g.fillStyle(0x778596);
-    g.fillRect(4, 20, 40, 8);
-    g.fillStyle(0x303741);
-    g.fillRect(11, 51, 10, 13);
-    g.fillRect(28, 51, 10, 13);
-    g.fillStyle(0xf2b544);
-    g.fillRect(9, 3, 30, 23);
-    g.fillStyle(0x252a31);
-    g.fillRect(13, 8, 22, 12);
-    g.fillStyle(0x53f4e7);
-    g.fillRect(16, 11, 6, 5);
-    g.fillRect(27, 11, 6, 5);
-    g.fillStyle(0xabb5c0);
-    g.fillRect(41, 29, 9, 8);
-    g.fillStyle(0xb7c0cb);
-    g.fillRect(48, 32, 16, 8);
-    g.generateTexture("robot", 68, 68);
+    for (let x = 0; x < 960; x += 40) {
+      g.lineBetween(x, 15, x, 76);
+    }
+
+    g.generateTexture("floor", 960, 76);
     g.clear();
 
-    // Training dummy.
-    g.fillStyle(0x6f4740);
-    g.fillRect(11, 20, 28, 34);
-    g.fillStyle(0xb87b54);
-    g.fillRect(7, 2, 36, 24);
-    g.fillStyle(0x29232a);
-    g.fillRect(13, 9, 7, 7);
-    g.fillRect(30, 9, 7, 7);
-    g.fillStyle(0xd8d1bb);
-    g.fillRect(15, 31, 20, 5);
-    g.fillStyle(0x44434b);
-    g.fillRect(12, 53, 10, 12);
-    g.fillRect(28, 53, 10, 12);
-    g.generateTexture("dummy", 50, 68);
+    g.fillStyle(0x66717c);
+    g.fillRect(0, 0, 150, 22);
+    g.lineStyle(3, 0xf2b544);
+    g.lineBetween(0, 2, 150, 2);
+    g.generateTexture("ledge", 150, 22);
+    g.clear();
+
+    const colors = {
+      head: 0xf2b544,
+      arm: 0x53f4e7,
+      legs: 0x8793a2,
+      armor: 0xc06c49
+    };
+
+    for (const [name, color] of Object.entries(colors)) {
+      g.fillStyle(color);
+      g.fillRect(2, 2, 26, 22);
+      g.fillStyle(0x252a31);
+      g.fillRect(7, 7, 5, 5);
+      g.fillRect(17, 7, 5, 5);
+      g.lineStyle(2, 0xffffff, 0.55);
+      g.strokeRect(2, 2, 26, 22);
+      g.generateTexture("part_" + name, 30, 26);
+      g.clear();
+    }
 
     g.destroy();
   }
 
   createArena() {
-    this.add.rectangle(
-      480, 270, 960, 540, 0x171c25
-    );
+    this.add.rectangle(W / 2, H / 2, W, H, 0x171c25);
 
-    // Background skyline.
     const bg = this.add.graphics();
-    bg.fillStyle(0x202630, 1);
+    bg.fillStyle(0x242b35);
 
     for (let i = 0; i < 16; i++) {
-      const x = i * 68;
-      const h = 65 + ((i * 37) % 110);
-      bg.fillRect(x, 425 - h, 45, h);
-
-      bg.fillStyle(0x3b4148, 0.6);
-      for (let y = 440 - h; y < 420; y += 18) {
-        bg.fillRect(x + 9, y, 5, 5);
-        bg.fillRect(x + 25, y, 5, 5);
-      }
-      bg.fillStyle(0x202630, 1);
+      const x = i * 65;
+      const height = 65 + (i * 37) % 110;
+      bg.fillRect(x, 420 - height, 45, height);
     }
 
-    // Floor.
     this.platforms = this.physics.add.staticGroup();
+    this.platforms.create(480, 502, "floor");
+    this.platforms.create(700, 375, "ledge");
 
-    const floor = this.add.rectangle(
-      480, 502, 960, 76, 0x454b52
-    );
-    this.physics.add.existing(floor, true);
-    this.platforms.add(floor);
-
-    const details = this.add.graphics();
-    details.lineStyle(3, 0xf2b544, 1);
-    details.lineBetween(0, 464, 960, 464);
-    details.lineStyle(1, 0x6a7078, 1);
-
-    for (let x = 0; x < 960; x += 40) {
-      details.lineBetween(x, 478, x + 20, 478);
-      details.lineBetween(x, 492, x, 530);
-    }
-
-    // A raised platform for jumping practice.
-    const ledge = this.add.rectangle(
-      700, 375, 150, 22, 0x59636c
-    );
-    this.physics.add.existing(ledge, true);
-    this.platforms.add(ledge);
-
-    this.add.text(18, 18, "THE SCRAP PIT // TRAINING BAY", {
+    this.add.text(18, 18, "THE SCRAP PIT // PARTS TEST", {
       fontFamily: "monospace",
       fontSize: "15px",
       color: "#f2b544"
     });
 
-    this.add.text(18, 40, "BUILD. BREAK. STEAL.", {
-      fontFamily: "monospace",
-      fontSize: "11px",
-      color: "#9099a5"
-    });
+    this.add.text(18, 39,
+      "BREAK PARTS. GRAB JUNK. KEEP FIGHTING.", {
+        fontFamily: "monospace",
+        fontSize: "11px",
+        color: "#aeb4be"
+      }
+    );
   }
 
-  createFighters() {
-    this.player = this.physics.add.sprite(
-      190, 420, "robot"
+  createRobots() {
+    // Invisible rectangular physics bodies.
+    // The robot pieces are drawn separately.
+    this.player = this.add.rectangle(
+      190, 425, 42, 60, 0x000000, 0
     );
-    this.player.setCollideWorldBounds(false);
-    this.player.setBounce(0.08);
-    this.player.setDragX(1000);
-    this.player.setMaxVelocity(420, 900);
-    this.player.body.setSize(44, 58);
-    this.player.setDepth(5);
+    this.physics.add.existing(this.player);
+    this.player.body.setBounce(0.05);
+    this.player.body.setDragX(900);
+    this.player.body.setMaxVelocity(400, 900);
 
-    this.dummy = this.physics.add.sprite(
-      520, 420, "dummy"
+    this.dummy = this.add.rectangle(
+      510, 425, 42, 60, 0x000000, 0
     );
-    this.dummy.setCollideWorldBounds(false);
-    this.dummy.setBounce(0.12);
-    this.dummy.setDragX(180);
-    this.dummy.body.setSize(36, 58);
-    this.dummy.setDepth(5);
-
-    this.physics.add.collider(this.player, this.platforms);
-    this.physics.add.collider(this.dummy, this.platforms);
-
-    // Keep the dummy from being pushed around by overlap jitter.
-    this.physics.add.collider(this.player, this.dummy);
-
-    this.dummy.setData("flash", false);
-  }
-
-  createUI() {
-    this.add.text(18, 76, "YOUR ROBOT", {
-      fontFamily: "monospace",
-      fontSize: "12px",
-      color: "#53f4e7"
-    });
-
-    this.playerBarBack = this.add.rectangle(
-      110, 104, 180, 15, 0x292e36
-    );
-    this.playerBar = this.add.rectangle(
-      20, 104, 180, 9, 0x53f4e7
-    ).setOrigin(0, 0.5);
-
-    this.add.text(370, 76, "TRAINING DUMMY", {
-      fontFamily: "monospace",
-      fontSize: "12px",
-      color: "#ff8c66"
-    });
-
-    this.dummyBarBack = this.add.rectangle(
-      470, 104, 180, 15, 0x292e36
-    );
-    this.dummyBar = this.add.rectangle(
-      380, 104, 180, 9, 0xff8c66
-    ).setOrigin(0, 0.5);
-
-    this.playerHpText = this.add.text(20, 117, "HP: 100 / 100", {
-      fontFamily: "monospace",
-      fontSize: "11px",
-      color: "#b9c2cd"
-    });
-
-    this.dummyHpText = this.add.text(380, 117, "HP: 100 / 100", {
-      fontFamily: "monospace",
-      fontSize: "11px",
-      color: "#b9c2cd"
-    });
+    this.physics.add.existing(this.dummy);
+    this.dummy.body.setBounce(0.1);
+    this.dummy.body.setDragX(160);
+    this.dummy.body.setMaxVelocity(600, 900);
   }
 
   createControls() {
     this.keys = this.input.keyboard.addKeys({
-      left: "A",
-      right: "D",
-      up: "W",
-      jump: "SPACE",
-      attack: "J",
-      attackAlt: "F",
-      restart: "R",
-      arrowLeft: "LEFT",
-      arrowRight: "RIGHT",
-      arrowUp: "UP"
+      a: "A",
+      d: "D",
+      w: "W",
+      space: "SPACE",
+      j: "J",
+      f: "F",
+      r: "R",
+      left: "LEFT",
+      right: "RIGHT",
+      up: "UP"
     });
 
     this.cursors = this.input.keyboard.createCursorKeys();
   }
 
-  update(time, delta) {
-    if (Phaser.Input.Keyboard.JustDown(this.keys.restart)) {
+  createHUD() {
+    this.add.text(18, 75, "YOUR ROBOT", {
+      fontFamily: "monospace",
+      fontSize: "12px",
+      color: "#53f4e7"
+    });
+
+    this.add.rectangle(110, 103, 180, 14, 0x303741);
+    this.playerBar = this.add.rectangle(
+      20, 103, 180, 8, 0x53f4e7
+    ).setOrigin(0, 0.5);
+
+    this.playerHP = this.add.text(20, 114, "", {
+      fontFamily: "monospace",
+      fontSize: "11px",
+      color: "#d8e0e8"
+    });
+
+    this.add.text(370, 75, "TRAINING DUMMY", {
+      fontFamily: "monospace",
+      fontSize: "12px",
+      color: "#ff8c66"
+    });
+
+    this.add.rectangle(470, 103, 180, 14, 0x303741);
+    this.dummyBar = this.add.rectangle(
+      380, 103, 180, 8, 0xff8c66
+    ).setOrigin(0, 0.5);
+
+    this.dummyHP = this.add.text(380, 114, "", {
+      fontFamily: "monospace",
+      fontSize: "11px",
+      color: "#d8e0e8"
+    });
+
+    this.partStatus = this.add.text(18, 142, "", {
+      fontFamily: "monospace",
+      fontSize: "12px",
+      color: "#ffffff",
+      lineSpacing: 5
+    });
+
+    this.add.text(18, 440,
+      "DROPPED PARTS CAN BE PICKED UP", {
+        fontFamily: "monospace",
+        fontSize: "11px",
+        color: "#f2b544"
+      }
+    );
+  }
+
+  update(time) {
+    if (Phaser.Input.Keyboard.JustDown(this.keys.r)) {
       this.scene.restart();
       return;
     }
 
-    if (GameState.gameOver) return;
+    if (!this.ended) {
+      this.moveRobot();
+      this.attack(time);
+      this.checkFalls();
+    }
 
-    this.handleMovement();
-    this.handleAttack(time);
-    this.handleFalling();
-    this.updateUI();
-    this.drawAttackEffect();
+    this.drawRobots();
+    this.updateHUD();
+    this.updateAttackVisual(time);
   }
 
-  handleMovement() {
-    const left = this.keys.left.isDown ||
-      this.cursors.left.isDown || this.keys.arrowLeft.isDown;
+  moveRobot() {
+    const left = this.keys.a.isDown || this.keys.left.isDown;
+    const right = this.keys.d.isDown || this.keys.right.isDown;
 
-    const right = this.keys.right.isDown ||
-      this.cursors.right.isDown || this.keys.arrowRight.isDown;
+    const jump = Phaser.Input.Keyboard.JustDown(this.keys.w) ||
+      Phaser.Input.Keyboard.JustDown(this.keys.space) ||
+      Phaser.Input.Keyboard.JustDown(this.keys.up);
 
-    const jumpPressed = Phaser.Input.Keyboard.JustDown(this.keys.up) ||
-      Phaser.Input.Keyboard.JustDown(this.keys.jump) ||
-      Phaser.Input.Keyboard.JustDown(this.keys.arrowUp);
+    // Losing legs makes the robot slower.
+    const speed = State.player.parts.legs
+      ? CFG.speed : 95;
 
     if (left && !right) {
-      this.player.setVelocityX(-CONFIG.moveSpeed);
-      GameState.player.facing = -1;
+      this.player.body.setVelocityX(-speed);
+      State.player.facing = -1;
     } else if (right && !left) {
-      this.player.setVelocityX(CONFIG.moveSpeed);
-      GameState.player.facing = 1;
+      this.player.body.setVelocityX(speed);
+      State.player.facing = 1;
     }
 
-    GameState.player.grounded = this.player.body.blocked.down ||
+    const grounded = this.player.body.blocked.down ||
       this.player.body.touching.down;
 
-    if (jumpPressed && GameState.player.grounded) {
-      this.player.setVelocityY(-CONFIG.jumpSpeed);
+    if (jump && grounded && State.player.parts.legs) {
+      this.player.body.setVelocityY(-CFG.jump);
     }
-
-    // Visual lean while moving.
-    this.player.setAngle(
-      Phaser.Math.Clamp(this.player.body.velocity.x * -0.025, -8, 8)
-    );
   }
 
-  handleAttack(time) {
-    const pressed = Phaser.Input.Keyboard.JustDown(this.keys.attack) ||
-      Phaser.Input.Keyboard.JustDown(this.keys.attackAlt);
+  attack(time) {
+    const pressed =
+      Phaser.Input.Keyboard.JustDown(this.keys.j) ||
+      Phaser.Input.Keyboard.JustDown(this.keys.f);
 
-    if (!pressed || !GameState.player.attackReady) return;
+    if (!pressed || time - this.lastAttack < CFG.attackCooldown) {
+      return;
+    }
 
-    GameState.player.attackReady = false;
-    this.lastAttackTime = time;
+    // Losing your arm removes your melee attack.
+    if (!State.player.parts.arm) {
+      this.showNotice("NO ARM! PICK ONE UP!");
+      return;
+    }
 
-    this.attackVisual.setPosition(
-      this.player.x + GameState.player.facing * 55,
-      this.player.y - 2
-    );
-    this.attackVisual.setVisible(true);
-
-    this.time.delayedCall(100, () => {
-      if (this.attackVisual && this.attackVisual.active) {
-        this.attackVisual.setVisible(false);
-      }
-    });
-
-    if (!GameState.dummy.alive) return;
+    this.lastAttack = time;
+    this.attackUntil = time + 110;
 
     const dx = this.dummy.x - this.player.x;
     const dy = Math.abs(this.dummy.y - this.player.y);
-    const facingTarget = dx * GameState.player.facing > 0;
+    const inFront = dx * State.player.facing > 0;
 
-    if (facingTarget &&
-        Math.abs(dx) <= CONFIG.attackRange &&
-        dy < 70) {
-      GameState.dummy.hp = Math.max(
-        0, GameState.dummy.hp - CONFIG.attackDamage
+    if (
+      State.dummy.hp > 0 &&
+      inFront &&
+      Math.abs(dx) < CFG.attackRange &&
+      dy < 70
+    ) {
+      State.dummy.hp = Math.max(
+        0, State.dummy.hp - CFG.attackDamage
       );
 
-      this.dummy.setVelocityX(
-        GameState.player.facing * CONFIG.attackKnockback
+      this.dummy.body.setVelocityX(
+        State.player.facing * 410
       );
-      this.dummy.setVelocityY(-180);
-      this.dummy.setTint(0xffffff);
+      this.dummy.body.setVelocityY(-160);
 
-      this.time.delayedCall(120, () => {
-        if (this.dummy && this.dummy.active) {
-          this.dummy.clearTint();
+      // Each threshold breaks off a different dummy part.
+      if (State.dummy.hp <= 75 && State.dummy.parts.armor) {
+        this.detachPart("dummy", "armor");
+      }
+
+      if (State.dummy.hp <= 50 && State.dummy.parts.arm) {
+        this.detachPart("dummy", "arm");
+      }
+
+      if (State.dummy.hp <= 25 && State.dummy.parts.head) {
+        this.detachPart("dummy", "head");
+      }
+
+      if (State.dummy.hp <= 0) {
+        if (State.dummy.parts.legs) {
+          this.detachPart("dummy", "legs");
         }
-      });
 
-      if (GameState.dummy.hp <= 0) {
-        GameState.dummy.alive = false;
-        this.dummy.setVelocity(
-          GameState.player.facing * 550, -350
-        );
-        this.message.setText("DUMMY DESTROYED!\nPRESS R TO RESTART");
-        GameState.gameOver = true;
+        this.showNotice("DUMMY DESTROYED!\nPRESS R TO RESET");
+        this.ended = true;
       }
     }
-
-    this.time.delayedCall(CONFIG.attackCooldown, () => {
-      GameState.player.attackReady = true;
-    });
   }
 
-  handleFalling() {
-    if (this.player.y > CONFIG.height + 80) {
-      GameState.player.hp = 0;
-      GameState.gameOver = true;
-      this.message.setText("ROBOT LOST!\nPRESS R TO RESTART");
+  detachPart(who, partName) {
+    const robotState = State[who];
+
+    if (!robotState.parts[partName]) return;
+    robotState.parts[partName] = false;
+
+    const robot = who === "player" ? this.player : this.dummy;
+
+    const part = this.physics.add.image(
+      robot.x + Phaser.Math.Between(-12, 12),
+      robot.y - 15,
+      "part_" + partName
+    );
+
+    part.setDepth(7);
+    part.setBounce(0.45);
+    part.setCollideWorldBounds(true);
+    part.setVelocity(
+      Phaser.Math.Between(-220, 220),
+      Phaser.Math.Between(-350, -180)
+    );
+    part.setData("partName", partName);
+    part.setData("owner", who);
+    part.setData("pickedUp", false);
+
+    this.droppedParts.add(part);
+    this.physics.add.collider(part, this.platforms);
+
+    this.showNotice(
+      (who === "player" ? "YOU LOST YOUR " : "DUMMY LOST ITS ") +
+      partName.toUpperCase() + "!"
+    );
+  }
+
+  collectPart(robot, part) {
+    if (!part.active || part.getData("pickedUp")) return;
+
+    const name = part.getData("partName");
+
+    // Only restore the player's missing slot.
+    if (!State.player.parts[name]) {
+      State.player.parts[name] = true;
+      part.setData("pickedUp", true);
+      part.destroy();
+
+      this.showNotice("PICKED UP: " + name.toUpperCase());
+    } else {
+      // Already have this part: destroy duplicate for now.
+      part.destroy();
+    }
+  }
+
+  bumpDummy() {
+    // Contact with the dummy can knock a player's part loose.
+    const now = this.time.now;
+
+    if (now - this.lastBump < 1800 || this.ended) return;
+    if (State.dummy.hp <= 0) return;
+
+    this.lastBump = now;
+
+    const missing = Object.keys(State.player.parts).filter(
+      key => State.player.parts[key]
+    );
+
+    if (missing.length === 0) return;
+
+    // Only lose a part when moving into the dummy.
+    if (Math.abs(this.player.body.velocity.x) < 100) return;
+
+    const chosen = Phaser.Utils.Array.GetRandom(missing);
+    this.detachPart("player", chosen);
+    this.player.body.setVelocityX(
+      this.player.x < this.dummy.x ? -200 : 200
+    );
+  }
+
+  checkFalls() {
+    if (this.player.y > H + 100) {
+      State.player.hp = 0;
+      this.ended = true;
+      this.showNotice("ROBOT LOST!\nPRESS R TO RESET");
     }
 
-    if (this.dummy.y > CONFIG.height + 100) {
-      GameState.dummy.hp = 0;
-      GameState.dummy.alive = false;
+    if (this.dummy.y > H + 100) {
+      State.dummy.hp = 0;
+      this.ended = true;
+      this.showNotice("DUMMY FELL!\nPRESS R TO RESET");
     }
   }
 
-  updateUI() {
-    const playerRatio = GameState.player.hp /
-      GameState.player.maxHp;
-    const dummyRatio = GameState.dummy.hp /
-      GameState.dummy.maxHp;
+  drawRobots() {
+    const g = this.drawings;
+    g.clear();
 
-    this.playerBar.width = 180 * playerRatio;
-    this.dummyBar.width = 180 * dummyRatio;
+    // Draw player's attached armor and body.
+    this.drawRobot(g, this.player, State.player.parts, true);
 
-    this.playerHpText.setText(
-      `HP: ${GameState.player.hp} / ${GameState.player.maxHp}`
-    );
-    this.dummyHpText.setText(
-      `HP: ${GameState.dummy.hp} / ${GameState.dummy.maxHp}`
-    );
+    // Draw dummy if it is still on screen.
+    if (this.dummy.y < H + 100) {
+      this.drawRobot(g, this.dummy, State.dummy.parts, false);
+    }
   }
 
-  drawAttackEffect() {
-    this.attackGraphics.clear();
+  drawRobot(g, body, parts, isPlayer) {
+    const x = body.x;
+    const y = body.y;
+    const facing = isPlayer ? State.player.facing : -1;
 
-    if (this.attackVisual.visible) {
-      this.attackGraphics.lineStyle(3, 0xffe0a0, 0.9);
-      this.attackGraphics.strokeRect(
-        this.attackVisual.x - 36,
-        this.attackVisual.y - 20,
-        72, 40
+    // Legs.
+    if (parts.legs) {
+      g.fillStyle(0x778392);
+      g.fillRect(x - 15, y + 14, 11, 16);
+      g.fillRect(x + 4, y + 14, 11, 16);
+      g.fillStyle(0x252a31);
+      g.fillRect(x - 18, y + 27, 16, 5);
+      g.fillRect(x + 2, y + 27, 16, 5);
+    }
+
+    // Body.
+    g.fillStyle(isPlayer ? 0x454f5d : 0x75493f);
+    g.fillRect(x - 21, y - 15, 42, 31);
+
+    // Armor plate.
+    if (parts.armor) {
+      g.fillStyle(isPlayer ? 0x657383 : 0xb16f51);
+      g.fillRect(x - 18, y - 11, 36, 20);
+      g.lineStyle(2, 0x252a31);
+      g.strokeRect(x - 18, y - 11, 36, 20);
+    }
+
+    // Head.
+    if (parts.head) {
+      g.fillStyle(isPlayer ? 0xf2b544 : 0xc58a62);
+      g.fillRect(x - 17, y - 34, 34, 22);
+
+      g.fillStyle(isPlayer ? 0x53f4e7 : 0x29232a);
+      g.fillRect(x - 11, y - 27, 7, 5);
+      g.fillRect(x + 4, y - 27, 7, 5);
+    }
+
+    // Arm and weapon.
+    if (parts.arm) {
+      const armX = x + facing * 17;
+      g.fillStyle(isPlayer ? 0x53f4e7 : 0xb87b54);
+      g.fillRect(armX - 3, y - 8, 11, 17);
+
+      g.fillStyle(isPlayer ? 0xc3d0db : 0x5e626c);
+      g.fillRect(
+        armX + facing * 5, y - 4, facing * 19, 8
       );
     }
+  }
+
+  updateAttackVisual(time) {
+    const active = time < this.attackUntil &&
+      State.player.parts.arm;
+
+    this.attackBox.setVisible(active);
+
+    if (active) {
+      this.attackBox.setPosition(
+        this.player.x + State.player.facing * 50,
+        this.player.y - 2
+      );
+    }
+  }
+
+  updateHUD() {
+    this.playerBar.width = 180 *
+      (State.player.hp / State.player.maxHp);
+
+    this.dummyBar.width = 180 *
+      (State.dummy.hp / State.dummy.maxHp);
+
+    this.playerHP.setText(
+      `HP: ${State.player.hp} / ${State.player.maxHp}`
+    );
+
+    this.dummyHP.setText(
+      `HP: ${State.dummy.hp} / ${State.dummy.maxHp}`
+    );
+
+    const p = State.player.parts;
+
+    this.partStatus.setText(
+      "YOUR PARTS\n" +
+      `HEAD: ${p.head ? "OK" : "MISSING"}   ` +
+      `ARM: ${p.arm ? "OK" : "MISSING"}\n` +
+      `LEGS: ${p.legs ? "OK" : "MISSING"}   ` +
+      `ARMOR: ${p.armor ? "OK" : "MISSING"}`
+    );
+  }
+
+  showNotice(message) {
+    this.notice.setText(message);
+
+    if (this.noticeTimer) {
+      this.noticeTimer.remove(false);
+    }
+
+    this.noticeTimer = this.time.delayedCall(1200, () => {
+      if (!this.ended) this.notice.setText("");
+    });
   }
 }
 
-const game = new Phaser.Game({
+new Phaser.Game({
   type: Phaser.AUTO,
   parent: "game",
-  width: CONFIG.width,
-  height: CONFIG.height,
+  width: W,
+  height: H,
   backgroundColor: "#171c25",
   pixelArt: true,
   physics: {
     default: "arcade",
     arcade: {
-      gravity: { y: CONFIG.gravity },
+      gravity: { y: CFG.gravity },
       debug: false
     }
   },
-  scene: [ScrapheadScene],
   scale: {
     mode: Phaser.Scale.FIT,
     autoCenter: Phaser.Scale.CENTER_BOTH
-  }
+  },
+  scene: [Scraphead]
 });
+
