@@ -2,84 +2,40 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>SCRAPHEAD: SCRAP WARZ</title>
   <style>
     * { box-sizing: border-box; }
-
     body {
       margin: 0;
-      min-height: 100vh;
+      padding: 16px;
       background: #101216;
       color: #e8e8e8;
       font-family: monospace;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      padding: 16px;
-    }
-
-    h1 {
-      margin: 0 0 6px;
-      color: #f6b844;
-      letter-spacing: 3px;
       text-align: center;
     }
-
-    .subtitle {
-      color: #8c929d;
-      margin-bottom: 16px;
-      text-align: center;
-    }
-
+    h1 { color: #f2b544; letter-spacing: 4px; }
     #game {
       width: 100%;
       max-width: 960px;
+      margin: 0 auto;
       border: 2px solid #454b54;
-      box-shadow: 0 0 35px #000;
     }
-
     #game canvas {
       display: block;
       width: 100%;
       height: auto;
     }
-
-    .controls {
-      max-width: 960px;
-      width: 100%;
-      color: #aeb4be;
-      font-size: 13px;
-      line-height: 1.9;
-      margin-top: 12px;
-    }
-
-    .key {
-      background: #292e36;
-      border: 1px solid #505761;
-      color: #fff;
-      padding: 2px 5px;
-    }
+    p { color: #aeb4be; font-size: 13px; }
   </style>
 </head>
 <body>
   <h1>SCRAPHEAD</h1>
-  <div class="subtitle">SCRAP WARZ // PROTOTYPE 0.1</div>
-
+  <p>SCRAP WARZ // GARAGE UPDATE 0.3</p>
   <div id="game"></div>
 
-  <div class="controls">
-    <b>MOVE:</b> <span class="key">A</span> <span class="key">D</span>
-    or <span class="key">←</span> <span class="key">→</span>
-    &nbsp; <b>JUMP:</b> <span class="key">W</span> /
-    <span class="key">↑</span> / <span class="key">SPACE</span>
-    <br>
-    <b>ATTACK:</b> <span class="key">J</span> or <span class="key">F</span>
-    &nbsp; <b>RESTART:</b> <span class="key">R</span>
-  </div>
-
   <script src="https://cdn.jsdelivr.net/npm/phaser@3.90.0/dist/phaser.min.js"></script>
+  <script src="./parts.js"></script>
   <script src="./game.js"></script>
 </body>
 </html>
