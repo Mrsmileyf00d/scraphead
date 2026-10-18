@@ -1,27 +1,92 @@
-const PARTS = window.SCRAP_PARTS || {};
-const SLOTS = window.SCRAP_SLOTS || ["arm", "movement", "body", "head", "back", "core"];
+"use strict";
 
-const DEFAULT_LOADOUT = window.SCRAP_DEFAULT_LOADOUT || {};
 const WIDTH = 960;
 const HEIGHT = 600;
-
-const COLORS = {
-  background: 0x101216,
-  floor: 0x292c31,
-  metal: 0x666d75,
-  orange: 0xff8a30,
-  red: 0xe74747,
-  yellow: 0xffd54a,
-  green: 0x6bdf91,
-  blue: 0x58bfff
+const PARTS = window.SCRAP_PARTS || {};
+const SLOT_META = Array.isArray(window.SCRAP_SLOTS) ? window.SCRAP_SLOTS : [
+  { key: "arm", label: "ARM" },
+  { key: "movement", label: "MOVEMENT" },
+  { key: "body", label: "BODY" },
+  { key: "head", label: "HEAD" },
+  { key: "back", label: "BACK" },
+  { key: "core", label: "POWER CORE" }
+];
+const DEFAULT_LOADOUT = window.SCRAP_DEFAULT_LOADOUT || {
+  arm: "rustyFist",
+  movement: "scrapLegs",
+  body: "scrapFrame",
+  head: "junkHead",
+  back: "emptyBack",
+  core: "basicCore"
 };
 
 const gameData = {
   loadout: { ...DEFAULT_LOADOUT },
   selectedSlot: 0,
+  scrap: 0,
   mode: "garage",
-  scrap: 0
+  wave: 1,
+  currentBattle: null,
+  playerHP: 100,
+  playerMaxHP: 100
 };
+
+function normalizeSlot(slot) {
+  if (typeof slot === "string") {
+    return { key: slot, label: slot.toUpperCase() };
+  }
+  return slot;
+}
+
+function slotList() {
+  return SLOT_META.map(normalizeSlot);
+}
+
+function getSlotOptions(slotKey) {
+  const source = PARTS[slotKey] || {};
+  return Object.keys(source).map((key) => ({
+    key,
+    ...source[key]
+  }));
+}
+
+function getPartForSlot(slotKey, selectedKey) {
+  const options = getSlotOptions(slotKey);
+  if (!options.length) {
+    return { key: "scrap", name: "Scrap Starter" };
+  }
+  return options.find((p) => p.key === selectedKey) || options[0];
+}
+
+function getBuildStats(loadout) {
+  const arm = PARTS.arm[loadout.arm] || PARTS.arm.rustyFist;
+  const movement = PARTS.movement[loadout.movement] || PARTS.movement.scrapLegs;
+  const body = PARTS.body[loadout.body] || PARTS.body.scrapFrame;
+  const head = PARTS.head[loadout.head] || PARTS.head.junkHead;
+  const back = PARTS.back[loadout.back] || PARTS.back.emptyBack;
+  const core = PARTS.core[loadout.core] || PARTS.core.basicCore;
+
+  const energy = (arm.energy || 0) + (movement.energy || 0) + (body.energy || 0) + (head.energy || 0) + (back.energy || 0);
+  const damage = Math.round((arm.damage || 0) * (loadout.head === "targeter" ? 1.2 : 1));
+  const speed = Math.max(75, (movement.speed || 0) + (body.speed || 0) + (arm.speed || 0) + (back.name === "Back Armor" ? -10 : 0));
+  const jump = movement.jump || 0;
+  const armor = Math.max(0, (body.armor || 0) + (back.name === "Back Armor" ? 15 : 0) + (loadout.core === "unstableCore" ? -10 : 0));
+
+  return {
+    damage,
+    speed,
+    jump,
+    armor,
+    range: arm.range || 72,
+    cooldown: arm.cooldown || 350,
+    energy,
+    capacity: core.capacity || 3,
+    valid: energy <= (core.capacity || 3),
+    armName: arm.name,
+    movementName: movement.name,
+    backName: back.name
+  };
+}
 
 class ScrapWarz extends Phaser.Scene {
   constructor() {
@@ -29,31 +94,63 @@ class ScrapWarz extends Phaser.Scene {
   }
 
   create() {
-    this.physics.world.setBounds(0, 0, WIDTH, HEIGHT);
-    this.cameras.main.setBackgroundColor(COLORS.background);
-    this.keys = this.input.keyboard.addKeys(
-      "A,D,W,SPACE,J,K,E,Q,ENTER,ESC"
-    );
+    this.cameras.main.setBackgroundColor(0x101216);
+    this.keys = this.input.keyboard.addKeys({
+      a: "A",
+      d: "D",
+      w: "W",
+      space: "SPACE",
+      j: "J",
+      k: "K",
+      e: "E",
+      r: "R",
+      enter: "ENTER",
+      esc: "ESC"
+    });
+
+    this.input.keyboard.on("keydown", (event) => {
+      const key = event.key;
+      const lower = key.toLowerCase();
+
+      if (gameData.mode === "garage") {
+        if (key === "ArrowUp" || lower === "w") {
+          gameData.selectedSlot = (gameData.selectedSlot - 1 + slotList().length) % slotList().length;
+          this.showGarage();
+        } else if (key === "ArrowDown" || lower === "s") {
+          gameData.selectedSlot = (gameData.selectedSlot + 1) % slotList().length;
+          this.showGarage();
+        } else if (key === "ArrowLeft" || lower === "a") {
+          this.cyclePart(-1);
+        } else if (key === "ArrowRight" || lower === "d") {
+          this.cyclePart(1);
+        } else if (key === "Enter" || lower === "e") {
+          this.startBattle();
+        }
+      } else if (gameData.mode === "battle") {
+        if (key === "Escape" || lower === "e") {
+          this.showGarage();
+        }
+      }
+    });
 
     this.showGarage();
   }
 
-  clearScene() {
-    this.physics.world.colliders.destroy();
-    this.physics.world.overlapRTree.clear();
+  clearScreen() {
     this.children.removeAll(true);
-    this.physics.world.pause();
-    this.physics.world.resume();
+    if (this.physics && this.physics.world && this.physics.world.colliders) {
+      this.physics.world.colliders.destroy();
+    }
   }
 
-  text(x, y, value, size = 18, color = "#ffffff") {
+  text(x, y, value, size = 16, color = "#ffffff", options = {}) {
     return this.add.text(x, y, value, {
       fontFamily: "monospace",
       fontSize: `${size}px`,
       color,
-      fontStyle: "bold",
       stroke: "#101216",
-      strokeThickness: 3
+      strokeThickness: options.strokeThickness ?? 3,
+      fontStyle: options.fontStyle ?? "bold"
     });
   }
 
@@ -63,689 +160,419 @@ class ScrapWarz extends Phaser.Scene {
     return box;
   }
 
-  getOptions(slot) {
-    const source = PARTS[slot] || PARTS[slot.toLowerCase()] || {};
-    let options = [];
+  garageRobotPreview() {
+    const centerX = 225;
+    const centerY = 290;
 
-    if (Array.isArray(source)) {
-      options = source;
-    } else if (source && typeof source === "object") {
-      options = Object.entries(source).map(([key, item]) => ({
-        key,
-        ...(typeof item === "object" ? item : { name: String(item) })
-      }));
-    }
-
-    return options.length ? options : [{
-      key: "scrap",
-      name: "Scrap Starter",
-      damage: 15,
-      speed: 0,
-      jump: 0,
-      description: "A basic junk-built part."
-    }];
-  }
-
-  getCurrentPart(slot) {
-    const options = this.getOptions(slot);
-    const selected = gameData.loadout[slot];
-
-    return options.find(part =>
-      part.key === selected ||
-      part.id === selected ||
-      part.name === selected
-    ) || options[0];
-  }
-
-  getPartName(part) {
-    return part?.name || part?.title || part?.key || "Unknown Part";
-  }
-
-  getStat(part, stat) {
-    return Number(part?.[stat] ?? part?.stats?.[stat] ?? 0);
+    this.add.rectangle(centerX, centerY + 70, 104, 92, 0x565e67).setStrokeStyle(4, 0x171a1f);
+    this.add.rectangle(centerX, centerY, 72, 50, 0xb0b8bf).setStrokeStyle(4, 0x171a1f);
+    this.add.rectangle(centerX - 18, centerY - 4, 12, 10, 0xffc54a);
+    this.add.rectangle(centerX + 18, centerY - 4, 12, 10, 0xffc54a);
+    this.add.rectangle(centerX - 58, centerY + 28, 24, 62, 0x777e87);
+    this.add.rectangle(centerX + 58, centerY + 28, 24, 62, 0x777e87);
+    this.add.rectangle(centerX - 28, centerY + 114, 28, 56, 0x777e87);
+    this.add.rectangle(centerX + 28, centerY + 114, 28, 56, 0x777e87);
   }
 
   showGarage() {
     gameData.mode = "garage";
-    this.clearScene();
+    this.clearScreen();
 
     this.add.rectangle(WIDTH / 2, HEIGHT / 2, WIDTH, HEIGHT, 0x15181d);
-
     this.text(30, 22, "SCRAPHEAD", 32, "#ff9b43");
-    this.text(32, 60, "SCRAP WARZ  /  GARAGE", 15, "#aeb6c2");
+    this.text(32, 60, "SCRAP WARZ / ROBOT GARAGE", 14, "#b8c0ca");
 
-    this.panel(30, 105, 400, 410);
-    this.text(55, 125, "YOUR ROBOT", 20, "#ffb24e");
+    this.panel(225, 290, 365, 390, 0x20242a);
+    this.text(60, 115, "YOUR ROBOT", 20, "#ffb24e");
+    this.garageRobotPreview();
+    this.text(66, 455, "PICK YOUR PARTS", 15, "#ffb24e");
+    this.text(66, 480, "Different parts alter your", 12, "#b8c0ca");
+    this.text(66, 498, "fighting style and energy use.", 12, "#b8c0ca");
 
-    // Robot preview made from shapes, so no image files are needed.
-    const robotX = 230;
-    const robotY = 280;
+    this.panel(690, 300, 485, 390, 0x20242a);
+    this.text(470, 115, "EQUIPMENT", 20, "#ffb24e");
 
-    this.add.rectangle(robotX, robotY + 65, 100, 85, 0x565e67)
-      .setStrokeStyle(4, 0x171a1f);
-
-    this.add.rectangle(robotX, robotY, 74, 48, 0xb0b8bf)
-      .setStrokeStyle(4, 0x171a1f);
-
-    this.add.rectangle(robotX - 18, robotY - 4, 12, 10, 0xffc54a);
-    this.add.rectangle(robotX + 18, robotY - 4, 12, 10, 0xffc54a);
-
-    this.add.rectangle(robotX - 58, robotY + 28, 24, 58, 0x777e87);
-    this.add.rectangle(robotX + 58, robotY + 28, 24, 58, 0x777e87);
-
-    this.add.rectangle(robotX - 28, robotY + 125, 26, 55, 0x777e87);
-    this.add.rectangle(robotX + 28, robotY + 125, 26, 55, 0x777e87);
-
-    this.text(65, 435, "BUILD YOUR FIGHTER", 16, "#b7c0cc");
-    this.text(65, 464, "Choose a slot and cycle through parts.", 12, "#aeb6c2");
-
-    this.panel(455, 105, 475, 410);
-    this.text(480, 125, "EQUIPMENT", 20, "#ffb24e");
-
-    this.slotRows = [];
-
-    SLOTS.forEach((slot, index) => {
-      const y = 175 + index * 45;
+    const slots = slotList();
+    slots.forEach((slot, index) => {
+      const y = 165 + index * 43;
       const selected = index === gameData.selectedSlot;
+      const slotKey = slot.key;
+      const part = getPartForSlot(slotKey, gameData.loadout[slotKey]);
 
-      const bg = this.add.rectangle(690, y + 5, 420, 38,
-        selected ? 0x414751 : 0x252a31);
-
-      const slotLabel = this.text(495, y - 9,
-        `${selected ? ">" : " "} ${String(slot).toUpperCase()}`,
-        13, selected ? "#ffffff" : "#b8c0cb");
-
-      const part = this.getCurrentPart(slot);
-      const partLabel = this.text(675, y - 9, this.getPartName(part), 12,
-        selected ? "#ffd27c" : "#d0d6de");
-
-      this.slotRows.push({ bg, slotLabel, partLabel });
+      this.add.rectangle(690, y + 7, 440, 36, selected ? 0x414751 : 0x252a31);
+      this.text(485, y, `${selected ? ">" : " "} ${slot.label}`, 13, selected ? "#ffffff" : "#b8c0ca");
+      this.text(690, y, part.name, 13, selected ? "#ffd27c" : "#d0d6de");
     });
 
-    this.panel(475, 445, 435, 52, 0x171a20);
-    this.text(490, 451, "SELECTED PART", 11, "#9da7b5");
+    const selectedSlot = slotList()[gameData.selectedSlot];
+    const selectedPart = getPartForSlot(selectedSlot.key, gameData.loadout[selectedSlot.key]);
+    const stats = getBuildStats(gameData.loadout);
 
-    const selectedSlot = SLOTS[gameData.selectedSlot];
-    const selectedPart = this.getCurrentPart(selectedSlot);
+    this.panel(665, 470, 270, 110, 0x171a20);
+    this.text(500, 442, "SELECTED PART", 12, "#9da7b5");
+    this.text(500, 462, selectedPart.name, 15, "#ffffff");
+    this.text(500, 488, `DAMAGE: ${stats.damage}  SPEED: ${stats.speed}`, 12, "#dfe6ee");
+    this.text(500, 507, `JUMP: ${stats.jump}  ARMOR: ${stats.armor}`, 12, "#dfe6ee");
+    this.text(500, 526, `ENERGY: ${stats.energy}/${stats.capacity}`, 12, stats.valid ? "#6bdf91" : "#ff7d7d");
 
-    this.text(490, 469, this.getPartName(selectedPart), 13, "#ffffff");
-
-    this.text(35, 535,
-      "W/S OR ↑/↓: SLOT   A/D OR ←/→: CHANGE PART",
-      13, "#d1d7df");
-
-    this.text(35, 558,
-      "ENTER: ENTER SCRAP PIT     E: CHANGE PART",
-      13, "#ffb24e");
-
-    this.text(665, 535, `SCRAP: ${gameData.scrap}`, 15, "#ffb24e");
-
-    this.input.keyboard.off("keydown");
-    this.input.keyboard.on("keydown", event => {
-      if (gameData.mode !== "garage") return;
-
-      if (["ArrowUp", "w", "W"].includes(event.key)) {
-        gameData.selectedSlot =
-          (gameData.selectedSlot - 1 + SLOTS.length) % SLOTS.length;
-        this.showGarage();
-      } else if (["ArrowDown", "s", "S"].includes(event.key)) {
-        gameData.selectedSlot =
-          (gameData.selectedSlot + 1) % SLOTS.length;
-        this.showGarage();
-      } else if (["ArrowLeft", "a", "A", "ArrowRight", "d", "D", "e", "E"].includes(event.key)) {
-        this.cyclePart(event.key === "ArrowLeft" || event.key.toLowerCase() === "a" ? -1 : 1);
-      } else if (event.key === "Enter") {
-        this.startBattle();
-      }
-    });
+    this.text(35, 540, "W/S or ↑/↓: SLOT   A/D or ←/→: CHANGE PART   ENTER: FIGHT", 13, "#ffffff");
+    this.text(35, 565, `SCRAP: ${gameData.scrap}`, 13, "#ffb24e");
+    this.text(690, 565, "STAGE 5: AI BRAWL", 13, "#6bdf91");
   }
 
   cyclePart(direction) {
-    const slot = SLOTS[gameData.selectedSlot];
-    const options = this.getOptions(slot);
-    const current = this.getCurrentPart(slot);
-
-    let index = options.indexOf(current);
-    index = (index + direction + options.length) % options.length;
-
-    const part = options[index];
-    gameData.loadout[slot] = part.key || part.id || part.name;
-
+    const slots = slotList();
+    const slot = slots[gameData.selectedSlot];
+    const options = getSlotOptions(slot.key);
+    const currentKey = gameData.loadout[slot.key];
+    const currentIndex = options.findIndex((part) => part.key === currentKey);
+    const nextIndex = (currentIndex + direction + options.length) % options.length;
+    gameData.loadout[slot.key] = options[nextIndex].key;
     this.showGarage();
   }
 
   startBattle() {
     gameData.mode = "battle";
-    this.clearScene();
+    gameData.wave = 1;
+    this.clearScreen();
+
+    this.add.rectangle(WIDTH / 2, HEIGHT / 2, WIDTH, HEIGHT, 0x171a20);
+    this.text(25, 18, "THE SCRAP PIT", 28, "#ff9b43");
+    this.text(28, 52, "SURVIVE THE WAVES OF ROBOT FIGHTERS", 12, "#c0c7d1");
+
+    this.player = this.makeFighter(170, 330, 0x49b8ff, "YOU");
+    this.player.maxHP = 100;
+    this.player.hp = 100;
+    this.player.setDepth(3);
 
     this.physics.world.setBounds(0, 0, WIDTH, HEIGHT);
 
-    this.add.rectangle(WIDTH / 2, HEIGHT / 2, WIDTH, HEIGHT, 0x171a20);
+    this.ground = this.add.rectangle(WIDTH / 2, 575, WIDTH, 50, 0x292c31);
+    this.physics.add.existing(this.ground, true);
+    this.add.rectangle(165, 445, 210, 22, 0x656d77);
+    this.add.rectangle(480, 470, 180, 22, 0x656d77);
+    this.add.rectangle(795, 425, 190, 22, 0x656d77);
+    this.physics.add.existing(this.add.rectangle(165, 445, 210, 22, 0x656d77), true);
+    this.physics.add.existing(this.add.rectangle(480, 470, 180, 22, 0x656d77), true);
+    this.physics.add.existing(this.add.rectangle(795, 425, 190, 22, 0x656d77), true);
 
-    // Background machinery.
-    for (let i = 0; i < 10; i++) {
-      this.add.rectangle(i * 110 + 20, 90, 65, 75, 0x22262c)
-        .setStrokeStyle(2, 0x343a43);
-    }
-
-    this.text(25, 18, "THE SCRAP PIT", 28, "#ff9b43");
-    this.text(28, 53, "SURVIVE THE MACHINERY. SMASH THE DUMMY.", 12, "#c0c7d1");
-
-    this.platforms = this.physics.add.staticGroup();
-    this.platforms.create(WIDTH / 2, 570, null)
-      .setDisplaySize(WIDTH, 60)
-      .setTint(COLORS.floor)
-      .refreshBody();
-
-    // Raised platforms.
-    this.makePlatform(165, 435, 210, 22);
-    this.makePlatform(480, 470, 180, 22);
-    this.makePlatform(795, 420, 190, 22);
-
-    this.makeConveyor(340, 510, 160, 18, 1);
-    this.makeConveyor(660, 510, 160, 18, -1);
-
-    this.makeSpikes(55, 535, 95);
-    this.makeSpikes(810, 535, 100);
-
-    this.makeCrusher(450, 150);
-    this.makeCrusher(720, 230);
-
+    this.conveyorLeft = this.makeConveyor(340, 520, 160, 18, 1);
+    this.conveyorRight = this.makeConveyor(660, 520, 160, 18, -1);
+    this.spikes = this.makeSpikes();
     this.barrels = this.physics.add.group();
     this.makeBarrel(285, 490);
-    this.makeBarrel(570, 445);
+    this.makeBarrel(575, 438);
 
-    this.droppedParts = this.physics.add.group();
+    this.physics.add.collider(this.player, this.ground);
+    this.physics.add.collider(this.player, this.conveyorLeft);
+    this.physics.add.collider(this.player, this.conveyorRight);
+    this.physics.add.collider(this.player, this.spikes);
+    this.physics.add.collider(this.player, this.barrels);
 
-    this.player = this.createFighter(170, 350, 0x49b8ff, "YOU");
-    this.dummy = this.createFighter(770, 350, 0xe74b4b, "DUMMY");
+    this.playerHPText = this.text(25, 80, "YOU: 100 HP", 15, "#58bfff");
+    this.waveText = this.text(25, 103, "WAVE: 1", 15, "#ffb24e");
+    this.enemyText = this.text(700, 80, "ENEMIES: 0", 15, "#ff7777");
+    this.scrapText = this.text(700, 103, `SCRAP: ${gameData.scrap}`, 15, "#ffb24e");
 
-    this.physics.add.collider(this.player, this.platforms);
-    this.physics.add.collider(this.dummy, this.platforms);
-    this.physics.add.collider(this.player, this.dummy);
-    this.physics.add.collider(this.barrels, this.platforms);
-    this.physics.add.collider(this.droppedParts, this.platforms);
-
-    this.physics.add.overlap(this.player, this.barrels, (player, barrel) => {
-      if (barrel.active && barrel.exploding !== true) {
-        this.explodeBarrel(barrel);
-      }
-    });
-
-    this.physics.add.overlap(this.player, this.droppedParts, (player, part) => {
-      if (!part.active) return;
-      part.destroy();
-      gameData.scrap += 1;
-      this.scrapLabel?.setText(`SCRAP: ${gameData.scrap}`);
-      this.notify("SCRAP COLLECTED +1");
-    });
-
-    this.physics.add.overlap(this.player, this.spikes, () => {
-      this.damageFighter(this.player, 10, "SPIKES!");
-    });
-
-    this.physics.add.overlap(this.dummy, this.spikes, () => {
-      this.damageFighter(this.dummy, 15, "DUMMY HIT!");
-    });
-
-    this.physics.add.overlap(this.player, this.crushers, (player, crusher) => {
-      if (crusher.isDown && !player.isDead) {
-        this.damageFighter(player, 25, "CRUSHED!");
-        player.setVelocityY(-230);
-      }
-    });
-
-    this.physics.add.overlap(this.dummy, this.crushers, (dummy, crusher) => {
-      if (crusher.isDown && !dummy.isDead) {
-        this.damageFighter(dummy, 30, "DUMMY CRUSHED!");
-        dummy.setVelocityY(-230);
-      }
-    });
-
-    this.physics.add.overlap(this.player, this.explosionZones, (player, zone) => {
-      if (zone.active) this.damageFighter(player, 18, "BOOM!");
-    });
-
-    this.physics.add.overlap(this.dummy, this.explosionZones, (dummy, zone) => {
-      if (zone.active) this.damageFighter(dummy, 25, "BOOM!");
-    });
-
-    this.playerHealth = 100;
-    this.dummyHealth = 100;
-    this.player.isDead = false;
-    this.dummy.isDead = false;
-
-    this.healthText = this.text(25, 78, "YOU: 100 HP", 15, "#58bfff");
-    this.dummyHealthText = this.text(740, 78, "DUMMY: 100 HP", 15, "#ff6b6b");
-    this.scrapLabel = this.text(25, 105, `SCRAP: ${gameData.scrap}`, 13, "#ffb24e");
-
-    this.text(25, 580,
-      "A/D MOVE   W/SPACE JUMP   J PUNCH   K HEAVY HIT   E GARAGE",
-      11, "#ffffff");
-
-    this.input.keyboard.off("keydown");
-    this.input.keyboard.on("keydown", event => {
-      if (gameData.mode !== "battle") return;
-
-      if (event.key.toLowerCase() === "e" || event.key === "Escape") {
-        this.showGarage();
-      }
-    });
-
-    this.attackCooldown = 0;
-    this.heavyCooldown = 0;
-    this.playerDamageCooldown = 0;
-    this.dummyDamageCooldown = 0;
-    this.dummyAttackTimer = 0;
-
-    this.explosionZones = this.physics.add.staticGroup();
-    this.crushers = this.physics.add.group({ allowGravity: false });
-    this.spikes = this.physics.add.staticGroup();
-
-    // Rebuild hazard overlaps now that their groups exist.
-    this.physics.add.overlap(this.player, this.spikes, () => {
-      this.damageFighter(this.player, 10, "SPIKES!");
-    });
-    this.physics.add.overlap(this.dummy, this.spikes, () => {
-      this.damageFighter(this.dummy, 15, "SPIKES!");
-    });
-
-    this.spikeObjects.forEach(spike => this.spikes.add(spike));
-    this.crusherObjects.forEach(crusher => this.crushers.add(crusher));
-
-    this.physics.add.overlap(this.player, this.crushers, (p, c) => {
-      if (c.isDown) this.damageFighter(p, 25, "CRUSHED!");
-    });
-    this.physics.add.overlap(this.dummy, this.crushers, (p, c) => {
-      if (c.isDown) this.damageFighter(p, 30, "CRUSHED!");
-    });
-
-    this.physics.add.overlap(this.player, this.explosionZones, () => {
-      this.damageFighter(this.player, 18, "BOOM!");
-    });
-    this.physics.add.overlap(this.dummy, this.explosionZones, () => {
-      this.damageFighter(this.dummy, 25, "BOOM!");
-    });
-
-    this.makeHazardTimers();
+    this.enemies = [];
+    this.spawnWave();
+    this.playerCooldown = 0;
+    this.playerAttackCooldown = 0;
+    this.lastDamageNotice = 0;
   }
 
-  makePlatform(x, y, w, h) {
-    const platform = this.platforms.create(x, y, null);
-    platform.setDisplaySize(w, h);
-    platform.setTint(0x656d77);
-    platform.refreshBody();
-    return platform;
+  makeFighter(x, y, fillColor, label) {
+    const body = this.add.rectangle(x, y, 42, 62, fillColor);
+    this.physics.add.existing(body);
+    body.body.setAllowGravity(true);
+    body.body.setSize(38, 62);
+    body.body.setCollideWorldBounds(true);
+    body.body.setMaxVelocity(400, 900);
+    body.body.setDragX(350);
+    body.setDepth(2);
+
+    const eye = this.add.rectangle(x, y - 12, 20, 7, 0xffdf6b);
+    eye.setDepth(4);
+    body.eye = eye;
+    body.label = label;
+    body.hp = 100;
+    body.maxHP = 100;
+    body.isDead = false;
+    body.aiType = "brawler";
+    body.attackCooldown = 0;
+    body.facing = 1;
+    body.nameText = this.text(x - 28, y - 48, label, 10, "#ffffff");
+    return body;
   }
 
-  makeConveyor(x, y, w, h, direction) {
-    const belt = this.add.rectangle(x, y, w, h, 0x484f59)
-      .setStrokeStyle(2, 0xffa13d);
-
-    this.text(x - w / 2 + 5, y - 8,
-      direction > 0 ? ">>>>>>>>>" : "<<<<<<<", 12, "#ffbd66");
-
+  makeConveyor(x, y, w, h, dir) {
+    const belt = this.add.rectangle(x, y, w, h, 0x484f59);
+    belt.setStrokeStyle(2, 0xffa13d);
     this.physics.add.existing(belt, true);
-    belt.isConveyor = true;
-    belt.direction = direction;
-    belt.width = w;
-    belt.height = h;
-
-    this.conveyorBelts = this.conveyorBelts || [];
-    this.conveyorBelts.push(belt);
+    belt.direction = dir;
+    belt.body.setSize(w, h);
+    return belt;
   }
 
-  makeSpikes(x, y, width) {
-    this.spikeObjects = this.spikeObjects || [];
-
-    const count = Math.floor(width / 22);
-
-    for (let i = 0; i < count; i++) {
-      const sx = x - width / 2 + i * 22 + 11;
-
-      const spike = this.add.triangle(sx, y, 0, 24, 12, 0, 24, 24, 0xc4cbd4);
-      spike.setStrokeStyle(2, 0x535b66);
-      this.physics.add.existing(spike, true);
-
-      spike.body.setSize(20, 22);
-      this.spikeObjects.push(spike);
-    }
-  }
-
-  makeCrusher(x, y) {
-    this.crusherObjects = this.crusherObjects || [];
-
-    const crusher = this.add.rectangle(x, y, 82, 30, 0x9b4b43)
-      .setStrokeStyle(4, 0xe7a08a);
-
-    this.physics.add.existing(crusher);
-    crusher.body.setAllowGravity(false);
-    crusher.body.setImmovable(true);
-    crusher.isDown = false;
-    crusher.baseY = y;
-    crusher.nextSlam = 1600 + Math.random() * 1200;
-
-    this.add.rectangle(x, y - 22, 100, 10, 0x555d67);
-
-    this.crusherObjects.push(crusher);
+  makeSpikes() {
+    const group = this.physics.add.staticGroup();
+    const spikeCoords = [
+      { x: 55, y: 545 },
+      { x: 85, y: 545 },
+      { x: 875, y: 545 },
+      { x: 905, y: 545 }
+    ];
+    spikeCoords.forEach((p) => {
+      const s = this.add.triangle(p.x, p.y, 0, 22, 12, 0, 24, 22, 0xc4cbd4);
+      s.setStrokeStyle(2, 0x535b66);
+      this.physics.add.existing(s, true);
+      group.add(s);
+    });
+    return group;
   }
 
   makeBarrel(x, y) {
-    const barrel = this.barrels.create(x, y, null);
-
-    barrel.setDisplaySize(34, 42);
-    barrel.setTint(0xb94c38);
-    barrel.setCircle(17);
-    barrel.setBounce(0.25);
-    barrel.setCollideWorldBounds(true);
-    barrel.setDragX(60);
+    const barrel = this.add.rectangle(x, y, 32, 42, 0xb94c38);
+    this.physics.add.existing(barrel);
+    barrel.body.setAllowGravity(true);
+    barrel.body.setCollideWorldBounds(true);
+    barrel.body.setBounce(0.2);
     barrel.exploding = false;
-
-    this.add.rectangle(x, y - 6, 24, 6, 0xffd05a)
-      .setDepth(3);
-
-    return barrel;
+    barrel.setDepth(2);
+    this.barrels.add(barrel);
   }
 
-  createFighter(x, y, color, label) {
-    const fighter = this.physics.add.sprite(x, y, null);
-
-    fighter.setDisplaySize(42, 65);
-    fighter.setTint(color);
-    fighter.setCollideWorldBounds(true);
-    fighter.setBounce(0.05);
-    fighter.setDragX(250);
-    fighter.setMaxVelocity(300, 700);
-    fighter.body.setSize(38, 62);
-
-    const eye = this.add.rectangle(x, y - 12, 20, 7, 0xffdf6b);
-    eye.setDepth(3);
-
-    fighter.eye = eye;
-    fighter.label = label;
-    fighter.isDead = false;
-    fighter.setData("hp", 100);
-
-    this.text(x - 28, y - 48, label, 10, "#ffffff");
-
-    return fighter;
-  }
-
-  makeHazardTimers() {
-    this.conveyorBelts = this.conveyorBelts || [];
-
-    this.time.addEvent({
-      delay: 80,
-      loop: true,
-      callback: () => {
-        if (gameData.mode !== "battle") return;
-
-        for (const belt of this.conveyorBelts) {
-          for (const fighter of [this.player, this.dummy]) {
-            if (!fighter?.active || fighter.isDead) continue;
-
-            const nearBelt =
-              Math.abs(fighter.x - belt.x) < belt.width / 2 &&
-              Math.abs((fighter.y + 32) - belt.y) < 27;
-
-            if (nearBelt) {
-              fighter.setVelocityX(fighter.body.velocity.x + belt.direction * 14);
-            }
-          }
-        }
-      }
-    });
-
-    this.time.addEvent({
-      delay: 100,
-      loop: true,
-      callback: () => {
-        if (gameData.mode !== "battle") return;
-
-        for (const crusher of this.crusherObjects) {
-          crusher.nextSlam -= 100;
-
-          if (crusher.nextSlam <= 0 && !crusher.isDown) {
-            crusher.isDown = true;
-            crusher.body.setVelocityY(550);
-            crusher.nextSlam = 2200 + Math.random() * 1300;
-
-            this.time.delayedCall(450, () => {
-              if (!crusher.active) return;
-              crusher.body.setVelocityY(0);
-              crusher.y = crusher.baseY + 90;
-              crusher.body.reset(crusher.x, crusher.y);
-
-              this.time.delayedCall(400, () => {
-                if (!crusher.active) return;
-                crusher.isDown = false;
-                crusher.body.setVelocityY(-420);
-
-                this.time.delayedCall(350, () => {
-                  if (!crusher.active) return;
-                  crusher.body.setVelocityY(0);
-                  crusher.y = crusher.baseY;
-                  crusher.body.reset(crusher.x, crusher.y);
-                });
-              });
-            });
-          }
-        }
-      }
-    });
-  }
-
-  damageFighter(fighter, amount, message) {
-    if (!fighter?.active || fighter.isDead) return;
-
-    const isPlayer = fighter === this.player;
-    const now = this.time.now;
-
-    if (isPlayer) {
-      if (now < this.playerDamageCooldown) return;
-      this.playerDamageCooldown = now + 650;
-      this.playerHealth = Math.max(0, this.playerHealth - amount);
-      this.healthText?.setText(`YOU: ${this.playerHealth} HP`);
-    } else {
-      if (now < this.dummyDamageCooldown) return;
-      this.dummyDamageCooldown = now + 650;
-      this.dummyHealth = Math.max(0, this.dummyHealth - amount);
-      this.dummyHealthText?.setText(`DUMMY: ${this.dummyHealth} HP`);
+  spawnWave() {
+    this.enemies = [];
+    const count = Math.min(1 + (gameData.wave - 1), 5);
+    const types = ["brawler", "runner", "scrapper"];
+    for (let i = 0; i < count; i++) {
+      const type = types[(gameData.wave + i - 1) % types.length];
+      const color = type === "brawler" ? 0xe74b4b : type === "runner" ? 0x6bdf91 : 0xff9b43;
+      const enemy = this.makeFighter(750 + (i % 2) * 70, 330 - Math.floor(i / 2) * 55, color, type.toUpperCase());
+      enemy.aiType = type;
+      enemy.hp = 70 + gameData.wave * 11;
+      enemy.maxHP = enemy.hp;
+      enemy.speed = type === "brawler" ? 120 : type === "runner" ? 160 : 135;
+      enemy.damage = type === "brawler" ? 12 : type === "runner" ? 7 : 9;
+      enemy.attackCooldown = 0;
+      enemy.facing = -1;
+      enemy.label = this.text(enemy.x - 30, enemy.y - 48, type.toUpperCase(), 10, "#ffffff");
+      enemy.nameText = enemy.label;
+      this.physics.add.collider(enemy, this.ground);
+      this.physics.add.collider(enemy, this.conveyorLeft);
+      this.physics.add.collider(enemy, this.conveyorRight);
+      this.physics.add.collider(enemy, this.spikes);
+      this.enemies.push(enemy);
     }
-
-    fighter.setVelocityY(-180);
-    fighter.setTint(0xffffff);
-    this.time.delayedCall(150, () => {
-      if (fighter.active) fighter.setTint(isPlayer ? 0x49b8ff : 0xe74b4b);
-    });
-
-    this.notify(message);
-
-    const hp = isPlayer ? this.playerHealth : this.dummyHealth;
-
-    if (hp <= 0) {
-      fighter.isDead = true;
-      fighter.setVelocity(0, -180);
-      fighter.setAlpha(0.5);
-
-      if (!isPlayer) {
-        gameData.scrap += 3;
-        this.scrapLabel?.setText(`SCRAP: ${gameData.scrap}`);
-        this.dropParts(fighter.x, fighter.y);
-        this.notify("DUMMY DESTROYED! +3 SCRAP");
-      } else {
-        this.notify("ROBOT WRECKED! PRESS E FOR GARAGE");
-      }
-    }
+    this.waveText.setText(`WAVE: ${gameData.wave}`);
+    this.enemyText.setText(`ENEMIES: ${this.enemies.length}`);
+    this.showBattleMessage(`WAVE ${gameData.wave}!`);
   }
 
-  notify(message) {
-    if (this.notice) this.notice.destroy();
-
-    this.notice = this.text(WIDTH / 2, 135, message, 17, "#ffd27c");
-    this.notice.setOrigin(0.5);
-
+  showBattleMessage(text) {
+    if (this.noticeText) this.noticeText.destroy();
+    this.noticeText = this.text(WIDTH / 2, 130, text, 18, "#ffd27c");
+    this.noticeText.setOrigin(0.5);
     this.time.delayedCall(1100, () => {
-      if (this.notice?.active) this.notice.destroy();
+      if (this.noticeText) {
+        this.noticeText.destroy();
+        this.noticeText = null;
+      }
     });
   }
 
-  dropParts(x, y) {
-    for (let i = 0; i < 3; i++) {
-      const part = this.droppedParts.create(x + (i - 1) * 22, y - 10, null);
-
-      part.setDisplaySize(18, 18);
-      part.setTint([0xffb34d, 0x6bdcff, 0xb8c0ca][i]);
-      part.setBounce(0.65);
-      part.setVelocity((i - 1) * 100, -200);
-      part.setCollideWorldBounds(true);
+  damagePlayer(amount, text) {
+    if (!this.player || this.player.isDead) return;
+    if (this.time.now < this.playerCooldown) return;
+    this.playerCooldown = this.time.now + 600;
+    gameData.playerHP = Math.max(0, gameData.playerHP - amount);
+    this.playerHPText.setText(`YOU: ${gameData.playerHP} HP`);
+    this.player.setVelocityY(-170);
+    this.showBattleMessage(text);
+    if (gameData.playerHP <= 0) {
+      this.player.isDead = true;
+      this.player.setAlpha(0.4);
+      this.showBattleMessage("YOU'RE WRECKED! PRESS E");
     }
   }
 
-  explodeBarrel(barrel) {
-    if (!barrel.active || barrel.exploding) return;
-
-    barrel.exploding = true;
-    barrel.setTint(0xffd34d);
-    barrel.setVelocity(0, 0);
-
-    this.time.delayedCall(400, () => {
-      if (!barrel.active || gameData.mode !== "battle") return;
-
-      const blast = this.add.circle(barrel.x, barrel.y, 88, 0xff692e, 0.45);
-      blast.setStrokeStyle(4, 0xffd34d);
-
-      const blastX = barrel.x;
-      const blastY = barrel.y;
-
-      for (const fighter of [this.player, this.dummy]) {
-        if (!fighter?.active || fighter.isDead) continue;
-
-        const distance = Phaser.Math.Distance.Between(
-          blastX, blastY, fighter.x, fighter.y
-        );
-
-        if (distance < 110) {
-          const direction = fighter.x < blastX ? -1 : 1;
-          fighter.setVelocityX(direction * 400);
-          fighter.setVelocityY(-320);
-          this.damageFighter(fighter, fighter === this.player ? 18 : 25, "BARREL BOOM!");
-        }
+  damageEnemy(enemy, amount, knockDir) {
+    if (!enemy || enemy.isDead) return;
+    enemy.hp = Math.max(0, enemy.hp - amount);
+    enemy.setVelocityX(knockDir * 230);
+    enemy.setVelocityY(-120);
+    enemy.setFillStyle(0xffffff);
+    this.time.delayedCall(120, () => {
+      if (enemy && !enemy.isDead) {
+        const palette = { brawler: 0xe74b4b, runner: 0x6bdf91, scrapper: 0xff9b43 };
+        enemy.setFillStyle(palette[enemy.aiType] || 0xffffff);
       }
-
-      this.time.delayedCall(250, () => blast.destroy());
-      barrel.destroy();
     });
+
+    if (enemy.hp <= 0) {
+      enemy.isDead = true;
+      enemy.setAlpha(0.35);
+      enemy.visible = false;
+      enemy.eye.setVisible(false);
+      if (enemy.nameText) enemy.nameText.setVisible(false);
+      gameData.scrap += 2;
+      this.scrapText.setText(`SCRAP: ${gameData.scrap}`);
+      this.showBattleMessage(`${enemy.aiType.toUpperCase()} WRECKED! +2 SCRAP`);
+    }
   }
 
   attack(heavy = false) {
-    if (this.attackCooldown > this.time.now && !heavy) return;
-    if (this.heavyCooldown > this.time.now && heavy) return;
-    if (this.player.isDead) return;
+    if (!this.player || this.player.isDead) return;
+    if (this.time.now < this.playerAttackCooldown) return;
 
-    if (heavy) this.heavyCooldown = this.time.now + 850;
-    else this.attackCooldown = this.time.now + 350;
+    const facing = this.player.facing || 1;
+    const hitX = this.player.x + facing * (heavy ? 95 : 65);
+    const hitBox = this.add.rectangle(hitX, this.player.y, heavy ? 64 : 42, 26, heavy ? 0xff6b3d : 0xffd15b, 0.45);
+    this.time.delayedCall(80, () => hitBox.destroy());
 
-    const facing = this.player.flipX ? -1 : 1;
-    const range = heavy ? 92 : 65;
-    const damage = heavy ? 28 : 14;
+    this.playerAttackCooldown = this.time.now + (heavy ? 750 : 350);
+    this.player.setVelocityX(facing * (heavy ? 170 : 90));
 
-    this.player.setVelocityX(facing * (heavy ? 210 : 100));
-
-    const hitX = this.player.x + facing * range;
-
-    this.add.rectangle(hitX, this.player.y, heavy ? 65 : 45, 34,
-      heavy ? 0xff6b3d : 0xffd15b, 0.5);
-
-    if (this.dummy.active && !this.dummy.isDead &&
-        Math.abs(this.dummy.x - hitX) < range &&
-        Math.abs(this.dummy.y - this.player.y) < 65) {
-      this.damageFighter(this.dummy, damage, heavy ? "HEAVY HIT!" : "SMACK!");
-
-      const knockback = heavy ? 420 : 230;
-      this.dummy.setVelocityX(facing * knockback);
-      this.dummy.setVelocityY(heavy ? -280 : -130);
-
-      if (Math.abs(this.dummy.x - this.player.x) < 100) {
-        this.notify(heavy ? "SCRAP SMASH!" : "HIT!");
+    let hitEnemy = null;
+    for (const enemy of this.enemies) {
+      if (!enemy || enemy.isDead || !enemy.active) continue;
+      if (Math.abs(enemy.x - hitX) < (heavy ? 90 : 60) && Math.abs(enemy.y - this.player.y) < 60) {
+        hitEnemy = enemy;
+        break;
       }
     }
 
-    // Punches can also set off nearby barrels.
-    this.barrels.getChildren().forEach(barrel => {
-      if (barrel.active &&
-          Math.abs(barrel.x - hitX) < 55 &&
-          Math.abs(barrel.y - this.player.y) < 65) {
-        this.explodeBarrel(barrel);
-      }
-    });
+    if (hitEnemy) {
+      this.damageEnemy(hitEnemy, heavy ? 35 : 18, facing);
+    }
   }
 
   update(time, delta) {
-    if (gameData.mode !== "battle" || !this.player?.active) return;
+    if (gameData.mode !== "battle" || !this.player) return;
 
-    const player = this.player;
-    const dummy = this.dummy;
+    const p = this.player;
 
-    if (!player.isDead) {
-      const speed = 210;
+    const left = this.keys.a.isDown;
+    const right = this.keys.d.isDown;
+    const jump = Phaser.Input.Keyboard.JustDown(this.keys.w) || Phaser.Input.Keyboard.JustDown(this.keys.space);
 
-      if (this.keys.A.isDown) {
-        player.setVelocityX(-speed);
-        player.flipX = true;
-      } else if (this.keys.D.isDown) {
-        player.setVelocityX(speed);
-        player.flipX = false;
+    if (!p.isDead) {
+      if (left && !right) {
+        p.setVelocityX(-220);
+        p.facing = -1;
+      } else if (right && !left) {
+        p.setVelocityX(220);
+        p.facing = 1;
+      } else {
+        p.setVelocityX(0);
       }
 
-      const grounded = player.body.blocked.down || player.body.touching.down;
-
-      if ((Phaser.Input.Keyboard.JustDown(this.keys.W) ||
-           Phaser.Input.Keyboard.JustDown(this.keys.SPACE)) && grounded) {
-        player.setVelocityY(-430);
+      const grounded = p.body.blocked.down || p.body.touching.down;
+      if (jump && grounded) {
+        p.setVelocityY(-430);
       }
 
-      if (Phaser.Input.Keyboard.JustDown(this.keys.J)) this.attack(false);
-      if (Phaser.Input.Keyboard.JustDown(this.keys.K)) this.attack(true);
+      if (Phaser.Input.Keyboard.JustDown(this.keys.j)) this.attack(false);
+      if (Phaser.Input.Keyboard.JustDown(this.keys.k)) this.attack(true);
     }
 
-    // Basic dummy AI: approach, then swing.
-    if (dummy?.active && !dummy.isDead && !player.isDead) {
-      this.dummyAttackTimer -= delta;
+    p.eye.x = p.x + (p.facing > 0 ? 4 : -4);
+    p.eye.y = p.y - 12;
+    p.nameText.x = p.x - 30;
+    p.nameText.y = p.y - 48;
 
-      const distance = player.x - dummy.x;
+    let aliveCount = 0;
+    for (const enemy of this.enemies) {
+      if (!enemy || enemy.isDead) continue;
+      aliveCount++;
 
-      if (Math.abs(distance) > 75) {
-        dummy.setVelocityX(Math.sign(distance) * 95);
-      } else {
-        dummy.setVelocityX(0);
+      enemy.facing = enemy.x < p.x ? 1 : -1;
+      enemy.eye.x = enemy.x + (enemy.facing > 0 ? 4 : -4);
+      enemy.eye.y = enemy.y - 12;
+      enemy.nameText.x = enemy.x - 34;
+      enemy.nameText.y = enemy.y - 48;
 
-        if (this.dummyAttackTimer <= 0) {
-          this.dummyAttackTimer = 1500;
-          player.setVelocityX(Math.sign(distance) * 180);
-          this.damageFighter(player, 7, "DUMMY PUNCHED YOU!");
+      const dx = p.x - enemy.x;
+      const absX = Math.abs(dx);
+      const direction = dx >= 0 ? 1 : -1;
+
+      if (enemy.aiType === "brawler") {
+        if (absX > 90) {
+          enemy.setVelocityX(direction * enemy.speed);
+        } else {
+          enemy.setVelocityX(0);
+          if (enemy.attackCooldown <= 0) {
+            enemy.attackCooldown = 1300;
+            this.damagePlayer(enemy.damage, "BRAWLER HIT!");
+          }
+        }
+      } else if (enemy.aiType === "runner") {
+        if (absX < 140) {
+          enemy.setVelocityX(-direction * enemy.speed);
+        } else if (absX > 220) {
+          enemy.setVelocityX(direction * enemy.speed * 0.85);
+        } else {
+          enemy.setVelocityX(0);
+        }
+        if (absX < 70 && enemy.attackCooldown <= 0) {
+          enemy.attackCooldown = 900;
+          this.damagePlayer(enemy.damage, "RUNNER HIT!");
+        }
+      } else if (enemy.aiType === "scrapper") {
+        if (absX > 80) {
+          enemy.setVelocityX(direction * enemy.speed);
+        } else {
+          enemy.setVelocityX(0);
+          if (enemy.attackCooldown <= 0) {
+            enemy.attackCooldown = 850;
+            this.damagePlayer(enemy.damage, "SCRAPPER HIT!");
+          }
+        }
+        if ((enemy.body.blocked.down || enemy.body.touching.down) && Math.random() < 0.005) {
+          enemy.setVelocityY(-340);
         }
       }
 
-      dummy.flipX = distance < 0;
-    }
+      enemy.attackCooldown -= delta;
+      enemy.setVelocityY(enemy.body.velocity.y);
 
-    for (const fighter of [player, dummy]) {
-      if (fighter?.active && fighter.eye?.active) {
-        fighter.eye.setPosition(fighter.x + (fighter.flipX ? -4 : 4), fighter.y - 12);
+      if (enemy.y > HEIGHT + 80) {
+        enemy.isDead = true;
+        enemy.visible = false;
+        enemy.eye.visible = false;
+        if (enemy.nameText) enemy.nameText.visible = false;
       }
     }
 
-    // Falling off the arena costs health and returns the robot to the floor.
-    for (const fighter of [player, dummy]) {
-      if (!fighter?.active || fighter.isDead || fighter.y < HEIGHT + 100) continue;
+    this.enemyText.setText(`ENEMIES: ${aliveCount}`);
 
-      this.damageFighter(fighter, 20, "FELL INTO THE PIT!");
+    if (aliveCount === 0 && !p.isDead) {
+      gameData.wave += 1;
+      this.spawnWave();
+    }
 
-      if (!fighter.isDead) {
-        fighter.setPosition(fighter === player ? 170 : 770, 330);
-        fighter.setVelocity(0, 0);
-      }
+    this.conveyorApplyForce();
+
+    if (this.player.y > HEIGHT + 100) {
+      this.damagePlayer(18, "FELL INTO THE PIT!");
+      p.setPosition(170, 330);
+    }
+  }
+
+  conveyorApplyForce() {
+    if (!this.player) return;
+    const playerNearLeft = Math.abs(this.player.x - this.conveyorLeft.x) < 80 && Math.abs(this.player.y - this.conveyorLeft.y) < 30;
+    const playerNearRight = Math.abs(this.player.x - this.conveyorRight.x) < 80 && Math.abs(this.player.y - this.conveyorRight.y) < 30;
+    if (playerNearLeft) this.player.setVelocityX(this.player.body.velocity.x + 10);
+    if (playerNearRight) this.player.setVelocityX(this.player.body.velocity.x - 10);
+
+    for (const enemy of this.enemies || []) {
+      if (!enemy || enemy.isDead) continue;
+      const nearLeft = Math.abs(enemy.x - this.conveyorLeft.x) < 80 && Math.abs(enemy.y - this.conveyorLeft.y) < 30;
+      const nearRight = Math.abs(enemy.x - this.conveyorRight.x) < 80 && Math.abs(enemy.y - this.conveyorRight.y) < 30;
+      if (nearLeft) enemy.setVelocityX(enemy.body.velocity.x + 10);
+      if (nearRight) enemy.setVelocityX(enemy.body.velocity.x - 10);
     }
   }
 }
@@ -754,7 +581,7 @@ const config = {
   type: Phaser.AUTO,
   width: WIDTH,
   height: HEIGHT,
-  parent: document.body,
+  parent: "game",
   backgroundColor: "#101216",
   physics: {
     default: "arcade",
@@ -771,3 +598,4 @@ const config = {
 };
 
 new Phaser.Game(config);
+

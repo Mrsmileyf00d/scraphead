@@ -16,11 +16,11 @@ window.SCRAP_PARTS = {
     },
     hammer: {
       name: "Junk Hammer",
-      damage: 38,
+      damage: 32,
       range: 92,
-      cooldown: 850,
+      cooldown: 800,
       energy: 2,
-      speed: -35,
+      speed: -25,
       jump: 0,
       armor: 0,
       drawback: "Slow attacks, slower movement",
@@ -28,26 +28,26 @@ window.SCRAP_PARTS = {
     },
     sword: {
       name: "Scrap Sword",
-      damage: 25,
-      range: 105,
+      damage: 24,
+      range: 110,
       cooldown: 420,
       energy: 1,
       speed: 0,
       jump: 0,
       armor: 0,
       drawback: "Costs energy",
-      description: "A quick blade made from junk."
+      description: "A quick blade from scrap metal."
     },
     drill: {
       name: "Power Drill",
-      damage: 12,
-      range: 65,
-      cooldown: 180,
+      damage: 13,
+      range: 64,
+      cooldown: 200,
       energy: 3,
       speed: 0,
       jump: 0,
       armor: 0,
-      drawback: "Low damage per hit, high energy use",
+      drawback: "Low damage, high power use",
       description: "Rapid attacks at close range."
     },
     scrapGun: {
@@ -59,23 +59,22 @@ window.SCRAP_PARTS = {
       speed: 0,
       jump: 0,
       armor: 0,
-      drawback: "Costs energy; prototype uses melee reach",
-      description: "A ranged weapon prototype."
+      drawback: "Long cooldown; uses energy",
+      description: "A ranged prototype equipped on the arm."
     }
   },
-
   movement: {
     scrapLegs: {
       name: "Scrap Legs",
-      speed: 260,
-      jump: 490,
+      speed: 240,
+      jump: 500,
       energy: 0,
       drawback: "No special movement",
       description: "Balanced walking and jumping."
     },
     wheels: {
       name: "Junk Wheels",
-      speed: 355,
+      speed: 330,
       jump: 0,
       energy: 0,
       drawback: "Cannot jump",
@@ -83,43 +82,42 @@ window.SCRAP_PARTS = {
     },
     springLegs: {
       name: "Spring Legs",
-      speed: 220,
-      jump: 650,
+      speed: 210,
+      jump: 630,
       energy: 1,
       drawback: "Slower running",
       description: "Huge jumps, slower movement."
     },
     rocketLegs: {
       name: "Rocket Legs",
-      speed: 290,
-      jump: 590,
+      speed: 270,
+      jump: 580,
       energy: 3,
       drawback: "Consumes power; harder to control",
-      description: "Powerful boosted jumps."
+      description: "Boosted jumps with a sharper control curve."
     }
   },
-
   body: {
     scrapFrame: {
       name: "Scrap Frame",
       armor: 0,
       speed: 0,
       energy: 0,
-      drawback: "No extra protection",
+      drawback: "No protection",
       description: "A basic lightweight frame."
     },
     ironArmor: {
       name: "Iron Armor",
-      armor: 30,
-      speed: -25,
+      armor: 28,
+      speed: -20,
       energy: 1,
       drawback: "Reduces movement speed",
       description: "Extra protection at a cost."
     },
     heavyFrame: {
       name: "Heavy Frame",
-      armor: 50,
-      speed: -55,
+      armor: 45,
+      speed: -50,
       energy: 2,
       drawback: "Very slow",
       description: "Built to take a beating."
@@ -130,22 +128,21 @@ window.SCRAP_PARTS = {
       speed: -10,
       energy: 2,
       drawback: "Uses more power",
-      description: "A defensive all-rounder."
+      description: "Defensive all-rounder."
     }
   },
-
   head: {
     junkHead: {
       name: "Junk Head",
       energy: 0,
       drawback: "No special ability",
-      description: "A bucket with two glowing eyes."
+      description: "A bucket with glowing eyes."
     },
     scanner: {
       name: "Scanner Head",
       energy: 1,
       drawback: "Consumes power",
-      description: "Highlights nearby dropped parts."
+      description: "Highlights nearby loot and hazards."
     },
     targeter: {
       name: "Targeting Head",
@@ -157,10 +154,9 @@ window.SCRAP_PARTS = {
       name: "Night Vision",
       energy: 1,
       drawback: "Consumes power",
-      description: "Improves visibility in dark arenas."
+      description: "Improves visibility in dim arenas."
     }
   },
-
   back: {
     emptyBack: {
       name: "Empty Back",
@@ -172,13 +168,13 @@ window.SCRAP_PARTS = {
       name: "Junk Jetpack",
       energy: 3,
       drawback: "Consumes power when jumping",
-      description: "Extra boost when you jump."
+      description: "Extra lift on jump."
     },
     booster: {
       name: "Dash Booster",
       energy: 2,
       drawback: "Consumes power",
-      description: "Adds a speed boost while moving."
+      description: "Extra speed while moving."
     },
     turret: {
       name: "Mini Turret",
@@ -189,11 +185,10 @@ window.SCRAP_PARTS = {
     extraArmor: {
       name: "Back Armor",
       energy: 1,
-      drawback: "Slightly reduces speed",
+      drawback: "Slight speed penalty",
       description: "Extra protection from behind."
     }
   },
-
   core: {
     basicCore: {
       name: "Basic Core",

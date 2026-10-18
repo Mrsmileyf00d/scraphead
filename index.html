@@ -1,37 +1,45 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>SCRAPHEAD: SCRAP WARZ</title>
   <style>
     * { box-sizing: border-box; }
     body {
       margin: 0;
-      padding: 16px;
       background: #101216;
-      color: #e8e8e8;
+      color: #e8edf3;
       font-family: monospace;
+      padding: 16px;
       text-align: center;
     }
-    h1 { color: #f2b544; letter-spacing: 4px; }
+    h1 {
+      margin: 0 0 6px;
+      color: #f2b544;
+      letter-spacing: 4px;
+    }
     #game {
-      width: 100%;
-      max-width: 960px;
+      width: min(960px, 100%);
       margin: 0 auto;
-      border: 2px solid #454b54;
+      border: 2px solid #444b54;
+      background: #171c25;
     }
     #game canvas {
       display: block;
       width: 100%;
       height: auto;
     }
-    p { color: #aeb4be; font-size: 13px; }
+    p {
+      margin: 0 0 12px;
+      color: #abb4c0;
+      font-size: 12px;
+    }
   </style>
 </head>
 <body>
   <h1>SCRAPHEAD</h1>
-  <p>SCRAP WARZ // GARAGE UPDATE 0.3</p>
+  <p>SCRAP WARZ // STABLE BUILD</p>
   <div id="game"></div>
 
   <script src="https://cdn.jsdelivr.net/npm/phaser@3.90.0/dist/phaser.min.js"></script>
